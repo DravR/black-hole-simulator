@@ -1,44 +1,97 @@
-import math
-import random
 import pygame
 
 
-class AccretionParticle:
+class AccretionDisk:
     def __init__(self, black_hole_x, black_hole_y):
         self.black_hole_x = black_hole_x
         self.black_hole_y = black_hole_y
-
-        self.angle = math.radians(random.randint(0, 360))
-        self.distance = random.randint(75, 210)
-        self.speed = random.uniform(0.006, 0.022)
-        self.size = random.randint(1, 3)
-
-        colors = [
-            (255, 70, 20),
-            (255, 120, 30),
-            (255, 180, 70),
-            (255, 230, 160),
-        ]
-
-        self.color = random.choice(colors)
+        self.rotation = 0
 
     def update(self):
-        self.angle += self.speed
+        self.rotation += 0.004
 
-    def get_position(self):
-        x = self.black_hole_x + math.cos(self.angle) * self.distance
-        y = self.black_hole_y + math.sin(self.angle) * self.distance * 0.28
-        return x, y
+    def draw_back(self, screen):
+        self._draw_plasma_disk(screen, back=True)
 
-    def is_behind_black_hole(self):
-        return math.sin(self.angle) < 0
+    def draw_front(self, screen):
+        self._draw_plasma_disk(screen, back=False)
 
-    def draw(self, screen):
-        x, y = self.get_position()
+    def _draw_plasma_disk(self, screen, back):
+        disk_layer = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
 
-        pygame.draw.circle(
-            screen,
-            self.color,
-            (int(x), int(y)),
-            self.size
+        if back:
+            y_offset = -32
+            alpha_boost = 0.55
+        else:
+            y_offset = 0
+            alpha_boost = 1.0
+
+        # Capas exteriores suaves
+        for i in range(12):
+            width = 620 - i * 32
+            height = 120 - i * 7
+
+            alpha = int((18 + i * 6) * alpha_boost)
+
+            color = (
+                255,
+                190 + min(i * 4, 55),
+                120 + min(i * 5, 80),
+                alpha
+            )
+
+            rect = (
+                self.black_hole_x - width // 2,
+                self.black_hole_y - height // 2 + y_offset,
+                width,
+                height
+            )
+
+            pygame.draw.ellipse(
+                disk_layer,
+                color,
+                rect
+            )
+
+        # Núcleo brillante del disco
+        for i in range(8):
+            width = 430 - i * 32
+            height = 46 - i * 4
+
+            alpha = int((35 + i * 12) * alpha_boost)
+
+            color = (
+                255,
+                235,
+                185,
+                alpha
+            )
+
+            rect = (
+                self.black_hole_x - width // 2,
+                self.black_hole_y - height // 2 + y_offset,
+                width,
+                height
+            )
+
+            pygame.draw.ellipse(
+                disk_layer,
+                color,
+                rect
+            )
+
+        # Suavizado falso
+        small = pygame.transform.smoothscale(
+            disk_layer,
+            (
+                screen.get_width() // 3,
+                screen.get_height() // 3
+            )
         )
+
+        smooth = pygame.transform.smoothscale(
+            small,
+            screen.get_size()
+        )
+
+        screen.blit(smooth, (0, 0))
