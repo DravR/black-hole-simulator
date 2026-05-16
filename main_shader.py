@@ -60,7 +60,7 @@ class BlackHoleShader(mglw.WindowConfig):
         float value = 0.0;
         float amplitude = 0.5;
 
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 7; i++) {
             value += amplitude * noise(p);
             p *= 2.0;
             amplitude *= 0.5;
@@ -69,28 +69,45 @@ class BlackHoleShader(mglw.WindowConfig):
         return value;
     }
 
-    float stars(vec2 p, float scale, float threshold) {
-        vec2 grid = floor(p * scale);
-        float rnd = hash(grid);
+    mat2 rotate2d(float angle) {
+        float s = sin(angle);
+        float c = cos(angle);
+        return mat2(c, -s, s, c);
+    }
 
-        if (rnd > threshold) {
-            vec2 local = fract(p * scale) - 0.5;
+    float starField(vec2 p) {
+        float stars = 0.0;
+
+        vec2 grid1 = floor(p * 260.0);
+        float rnd1 = hash(grid1);
+
+        if (rnd1 > 0.994) {
+            vec2 local = fract(p * 260.0) - 0.5;
             float d = length(local);
-            float star = smoothstep(0.09, 0.0, d);
-            float twinkle = 0.65 + 0.35 * sin(time * 2.0 + rnd * 60.0);
-            return star * twinkle;
+            stars += smoothstep(0.075, 0.0, d);
         }
 
-        return 0.0;
+        vec2 grid2 = floor((p + vec2(0.37, 0.12)) * 520.0);
+        float rnd2 = hash(grid2);
+
+        if (rnd2 > 0.997) {
+            vec2 local = fract((p + vec2(0.37, 0.12)) * 520.0) - 0.5;
+            float d = length(local);
+            stars += smoothstep(0.045, 0.0, d) * 0.8;
+        }
+
+        return stars;
     }
 
     vec3 temperatureColor(float heat) {
-        vec3 cold = vec3(1.0, 0.30, 0.06);
-        vec3 warm = vec3(1.0, 0.68, 0.22);
-        vec3 hot = vec3(1.0, 0.96, 0.78);
+        vec3 cold = vec3(0.95, 0.14, 0.02);
+        vec3 warm = vec3(1.0, 0.48, 0.06);
+        vec3 hot = vec3(1.0, 0.86, 0.35);
+        vec3 whiteHot = vec3(1.0, 0.98, 0.82);
 
-        vec3 color = mix(cold, warm, smoothstep(0.0, 0.65, heat));
-        color = mix(color, hot, smoothstep(0.65, 1.0, heat));
+        vec3 color = mix(cold, warm, smoothstep(0.0, 0.45, heat));
+        color = mix(color, hot, smoothstep(0.45, 0.78, heat));
+        color = mix(color, whiteHot, smoothstep(0.78, 1.0, heat));
 
         return color;
     }
@@ -98,83 +115,150 @@ class BlackHoleShader(mglw.WindowConfig):
     vec2 lens(vec2 p) {
         float r = length(p);
 
-        if (r < 0.95 && r > shadow_radius) {
-            float strength = (0.95 - r) / 0.95;
-            float bend = strength * strength * 0.18;
+        if (r > shadow_radius && r < 1.35) {
+            float strength = (1.35 - r) / 1.35;
+            float bend = strength * strength * 0.30;
             p += normalize(p) * bend;
         }
 
         return p;
     }
 
-    vec3 renderScene(vec2 p, vec2 starUV) {
-        float r = length(p);
+    float diskMaskFunc(vec2 q, float innerDisk, float outerDisk, out float diskR, out float diskAngle, out float heat) {
+        vec2 diskP = q;
+        diskP.y /= 0.46;
 
-        vec3 color = vec3(0.0);
+        diskR = length(diskP);
+        diskAngle = atan(diskP.y, diskP.x);
 
-        float starLayer =
-            stars(starUV, 180.0, 0.994) +
-            stars(starUV + vec2(0.13, 0.31), 320.0, 0.997);
-
-        color += vec3(starLayer);
-
-        vec2 diskP = p;
-        diskP.y /= 0.16;
-
-        float diskR = length(diskP);
-        float diskAngle = atan(diskP.y, diskP.x);
-
-        float innerDisk = inner_disk_radius;
-        float outerDisk = outer_disk_radius;
-
-        vec2 plasmaCoords = vec2(
-            diskAngle * 2.4 + time * 0.40,
-            diskR * 6.0 - time * 0.28
+        vec2 flow = vec2(
+            diskAngle * 2.9 + time * 0.55,
+            diskR * 7.5 - time * 0.42
         );
 
-        float plasma = fbm(plasmaCoords * 3.5);
-        float turbulence = (plasma - 0.5) * 0.10;
+        float plasmaA = fbm(flow * 3.0);
+        float plasmaB = fbm(flow * 8.0 + vec2(2.7, 5.1));
 
-        float diskShape =
-            smoothstep(innerDisk, innerDisk + 0.05, diskR + turbulence) *
-            (1.0 - smoothstep(outerDisk - 0.18, outerDisk, diskR + turbulence));
+        float turbulence = (plasmaA - 0.5) * 0.13 + (plasmaB - 0.5) * 0.055;
 
-        float verticalSoftness = exp(-abs(p.y) * 23.0);
-        diskShape *= verticalSoftness;
+        float mask =
+            smoothstep(innerDisk, innerDisk + 0.045, diskR + turbulence) *
+            (1.0 - smoothstep(outerDisk - 0.20, outerDisk, diskR + turbulence));
 
-        float heat = 1.0 - smoothstep(innerDisk, outerDisk, diskR);
+        heat = 1.0 - smoothstep(innerDisk, outerDisk, diskR);
 
-        float doppler = 1.0 + 0.75 * sin(diskAngle);
+        float broadThickness = exp(-abs(q.y) * 5.1);
+        float coreThickness = exp(-abs(q.y) * 16.0);
 
-        vec3 disk = temperatureColor(heat) * diskShape * doppler * 3.8;
+        return mask * (broadThickness * 0.55 + coreThickness * 0.75);
+    }
 
-        float diskGlow =
-            exp(-abs(p.y) * 8.0)
-            * smoothstep(outerDisk, innerDisk, diskR)
-            * 0.75;
+    vec3 renderBlackHole(vec2 p, vec2 starUV) {
+        vec3 color = vec3(0.0);
+        float r = length(p);
 
-        color += vec3(1.0, 0.48, 0.14) * diskGlow;
+        float stars = starField(starUV);
+        color += vec3(stars) * 0.9;
+
+        vec2 q = rotate2d(-0.45) * p;
+
+        float innerDisk = inner_disk_radius * 0.88;
+        float outerDisk = outer_disk_radius * 1.28;
+
+        float diskR;
+        float diskAngle;
+        float heat;
+
+        float diskMask = diskMaskFunc(q, innerDisk, outerDisk, diskR, diskAngle, heat);
+
+        vec2 flow = vec2(
+            diskAngle * 3.4 + time * 0.70,
+            diskR * 8.0 - time * 0.35
+        );
+
+        float plasmaA = fbm(flow * 4.0);
+        float plasmaB = fbm(flow * 10.0 + vec2(4.2, 1.3));
+
+        float filament = smoothstep(0.36, 1.0, plasmaA);
+        float fineFilament = smoothstep(0.55, 1.0, plasmaB);
+
+        float doppler = 1.0 + 1.05 * sin(diskAngle - 0.55);
+        doppler = max(0.18, doppler);
+
+        vec3 diskColor = temperatureColor(heat);
+
+        vec3 disk =
+            diskColor *
+            diskMask *
+            doppler *
+            (3.6 + filament * 3.4 + fineFilament * 2.6);
+
         color += disk;
 
-        float topArc = smoothstep(0.070, 0.0, abs(r - photon_ring_radius * 1.4));
-        topArc *= smoothstep(-0.10, 0.35, p.y);
-        topArc *= 1.0 - smoothstep(0.50, 1.05, abs(p.x));
+        float hotCore =
+            diskMask *
+            smoothstep(0.95, 0.25, abs(diskR - innerDisk)) *
+            exp(-abs(q.y) * 18.0);
 
-        color += vec3(1.0, 0.82, 0.48) * topArc * 2.4;
+        color += vec3(1.0, 0.98, 0.82) * hotCore * doppler * 5.4;
 
-        float photonRing = smoothstep(0.022, 0.0, abs(r - photon_ring_radius));
-        color += vec3(1.0, 0.96, 0.78) * photonRing * 5.2;
+        float tail =
+            smoothstep(0.0, 1.0, q.x) *
+            exp(-abs(q.y - 0.08 * q.x) * 4.0) *
+            (1.0 - smoothstep(1.15, 2.35, q.x));
 
-        float halo = exp(-abs(r - photon_ring_radius * 1.08) * 15.0) * 0.85;
-        color += vec3(1.0, 0.58, 0.20) * halo;
+        float tailNoise = fbm(vec2(q.x * 3.8 - time * 0.55, q.y * 8.0 + time * 0.2));
+        tail *= smoothstep(0.25, 1.0, tailNoise);
+
+        color += vec3(1.0, 0.25, 0.03) * tail * 2.8;
+
+        float foregroundBand =
+            smoothstep(-0.12, 0.20, q.y) *
+            (1.0 - smoothstep(0.42, 0.92, q.y)) *
+            smoothstep(-1.25, -0.15, q.x + 0.25) *
+            (1.0 - smoothstep(1.85, 2.45, q.x));
+
+        float foregroundNoise =
+            fbm(vec2(q.x * 5.0 - time * 0.60, q.y * 12.0 + time * 0.25));
+
+        foregroundBand *= smoothstep(0.25, 1.0, foregroundNoise);
+
+        vec3 foregroundColor =
+            temperatureColor(0.65 + foregroundNoise * 0.35) *
+            foregroundBand *
+            5.2;
+
+        vec2 arcP = rotate2d(-0.45) * p;
+        float arcR = length(vec2(arcP.x, (arcP.y - 0.04) / 0.82));
+
+        float upperArc =
+            smoothstep(0.050, 0.0, abs(arcR - photon_ring_radius * 1.48)) *
+            smoothstep(-0.22, 0.40, arcP.y) *
+            (1.0 - smoothstep(0.32, 1.25, abs(arcP.x)));
+
+        float upperArc2 =
+            smoothstep(0.035, 0.0, abs(arcR - photon_ring_radius * 1.68)) *
+            smoothstep(-0.12, 0.48, arcP.y) *
+            (1.0 - smoothstep(0.35, 1.18, abs(arcP.x)));
+
+        color += vec3(1.0, 0.80, 0.36) * upperArc * 4.4;
+        color += vec3(1.0, 0.55, 0.16) * upperArc2 * 1.9;
+
+        float photonRing = smoothstep(0.018, 0.0, abs(r - photon_ring_radius));
+        color += vec3(1.0, 0.96, 0.78) * photonRing * 5.8;
+
+        float halo = exp(-abs(r - photon_ring_radius * 1.06) * 14.0) * 0.85;
+        color += vec3(1.0, 0.48, 0.12) * halo;
 
         float shadow = smoothstep(
-            shadow_radius + 0.03,
-            shadow_radius - 0.04,
+            shadow_radius + 0.025,
+            shadow_radius - 0.045,
             r
         );
 
         color = mix(color, vec3(0.0), shadow);
+
+        color += foregroundColor;
 
         return color;
     }
@@ -183,35 +267,37 @@ class BlackHoleShader(mglw.WindowConfig):
         vec2 p = uv * 2.0 - 1.0;
         p.x *= resolution.x / resolution.y;
 
+        float r = length(p);
+
         vec2 lensedP = lens(p);
 
         vec2 starUV = uv;
 
-        float r = length(p);
-
-        if (r < 0.95 && r > shadow_radius) {
+        if (r > shadow_radius && r < 1.35) {
             vec2 dir = normalize(p);
-            float strength = (0.95 - r) / 0.95;
-            starUV += dir * strength * strength * 0.08;
+            float strength = (1.35 - r) / 1.35;
+            starUV += dir * strength * strength * 0.13;
         }
 
-        float chroma = smoothstep(0.90, shadow_radius, r) * 0.006;
+        float chroma = smoothstep(1.05, shadow_radius, r) * 0.007;
         vec2 dir = r > 0.0 ? normalize(p) : vec2(0.0);
 
-        float red = renderScene(lensedP + dir * chroma, starUV).r;
-        float green = renderScene(lensedP, starUV).g;
-        float blue = renderScene(lensedP - dir * chroma, starUV).b;
+        float red = renderBlackHole(lensedP + dir * chroma, starUV).r;
+        float green = renderBlackHole(lensedP, starUV).g;
+        float blue = renderBlackHole(lensedP - dir * chroma, starUV).b;
 
         vec3 color = vec3(red, green, blue);
 
-        float bloom = max(max(color.r, color.g), color.b);
-        color += vec3(1.0, 0.62, 0.25) * bloom * bloom * 0.35;
+        float brightness = max(max(color.r, color.g), color.b);
 
-        float vignette = smoothstep(1.55, 0.25, length(p));
+        color += vec3(1.0, 0.43, 0.08) * brightness * brightness * 0.55;
+        color += vec3(1.0, 0.78, 0.32) * pow(brightness, 4.0) * 0.35;
+
+        float vignette = smoothstep(1.65, 0.18, length(p));
         color *= vignette;
 
         color = color / (color + vec3(1.0));
-        color = pow(color, vec3(0.82));
+        color = pow(color, vec3(0.76));
 
         fragColor = vec4(color, 1.0);
     }
